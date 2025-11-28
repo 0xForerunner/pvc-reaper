@@ -50,6 +50,7 @@ docker-build:
 
 # Push Docker image
 docker-push:
+    echo $GITHUB_TOKEN | docker login ghcr.io -u 0xforerunner --password-stdin
     docker push {{IMAGE_NAME}}:{{VERSION}}
     docker push {{IMAGE_NAME}}:latest
 
