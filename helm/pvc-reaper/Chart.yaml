@@ -1,0 +1,14 @@
+apiVersion: v2
+name: pvc-reaper
+description: A Helm chart for pvc-reaper - automatically deletes PVCs pointing to missing nodes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - pvc
+  - openebs
+  - storage
+home: https://github.com/your-org/pvc-reaper
+maintainers:
+  - name: PVC Reaper Contributors

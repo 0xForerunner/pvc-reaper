@@ -1,0 +1,68 @@
+# Default values for pvc-reaper
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/your-org/pvc-reaper
+  pullPolicy: IfNotPresent
+  tag: ""  # Overrides the image tag whose default is the chart appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# PVC Reaper configuration
+config:
+  # Storage class names to filter PVCs (comma-separated)
+  storageClassNames: "openebs-lvm"
+
+  # Storage provisioner annotation value to filter PVCs
+  storageProvisioner: "local.csi.openebs.io"
+
+  # Interval between reconciliation loops in seconds
+  reconcileIntervalSecs: 60
+
+  # Dry run mode - don't actually delete PVCs
+  dryRun: false
+
+  # Check for pending pods with unschedulable PVCs
+  checkPendingPods: true
+
+  # How long a pod must be pending before considering its PVC for deletion (seconds)
+  pendingPodThresholdSecs: 300
+
+# Log level (trace, debug, info, warn, error)
+logLevel: info

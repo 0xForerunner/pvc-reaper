@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pvc-reaper.fullname" . }}
+  labels:
+    {{- include "pvc-reaper.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pvc-reaper.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "pvc-reaper.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "pvc-reaper.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+        - name: STORAGE_CLASS_NAMES
+          value: {{ .Values.config.storageClassNames | quote }}
+        - name: STORAGE_PROVISIONER
+          value: {{ .Values.config.storageProvisioner | quote }}
+        - name: RECONCILE_INTERVAL_SECS
+          value: {{ .Values.config.reconcileIntervalSecs | quote }}
+        - name: DRY_RUN
+          value: {{ .Values.config.dryRun | quote }}
+        - name: CHECK_PENDING_PODS
+          value: {{ .Values.config.checkPendingPods | quote }}
+        - name: PENDING_POD_THRESHOLD_SECS
+          value: {{ .Values.config.pendingPodThresholdSecs | quote }}
+        - name: RUST_LOG
+          value: {{ .Values.logLevel }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
