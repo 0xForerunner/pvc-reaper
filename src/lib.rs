@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use k8s_openapi::api::core::v1::{Node, PersistentVolumeClaim, Pod};
 use kube::{
     api::{Api, DeleteParams, ListParams},
     Client, ResourceExt,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -55,16 +56,175 @@ pub struct ReapResult {
     pub skipped_count: usize,
 }
 
-#[derive(Debug, Default)]
-struct NodeInventory {
-    available: HashSet<String>,
-    schedulable: HashSet<String>,
-    unschedulable_reasons: HashMap<String, String>,
+#[derive(Debug)]
+struct State {
+    nodes: Vec<Node>,
+    node_names: HashSet<String>,
+    pods: Vec<Pod>,
+    pvcs: Vec<PersistentVolumeClaim>,
+    now: DateTime<Utc>,
 }
 
-impl NodeInventory {
-    fn available_nodes(&self) -> &HashSet<String> {
-        &self.available
+impl State {
+    async fn new(client: &Client) -> Result<Self> {
+        let nodes = Api::<Node>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .context("Failed to list nodes")?
+            .items;
+
+        let pods = Api::<Pod>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .context("Failed to list pods")?
+            .items;
+
+        let pvcs = Api::<PersistentVolumeClaim>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .context("Failed to list PVCs")?
+            .items;
+
+        let node_names = nodes.iter().map(ResourceExt::name_any).collect();
+
+        Ok(Self {
+            nodes,
+            node_names,
+            pods,
+            pvcs,
+            now: Utc::now(),
+        })
+    }
+
+    async fn reap(&self, client: &Client, config: &ReaperConfig) -> Result<ReapResult> {
+        let mut result = ReapResult::default();
+
+        for pvc in &self.pvcs {
+            if !matches_storage_criteria(pvc, config) {
+                continue;
+            }
+
+            let namespace = pvc.namespace().unwrap_or_default();
+            let pvc_name = pvc.name_any();
+
+            match self.deletion_reason(pvc, config) {
+                Some(reason) => {
+                    let description = reason.describe();
+                    warn!(
+                        "PVC {}/{} scheduled for deletion: {}",
+                        namespace, pvc_name, description
+                    );
+
+                    if let Err(e) = self
+                        .perform_delete(client, config, &namespace, &pvc_name, &description)
+                        .await
+                    {
+                        error!("Failed to delete PVC {}/{}: {:#}", namespace, pvc_name, e);
+                    } else {
+                        result.deleted_count += 1;
+                    }
+                }
+                None => {
+                    result.skipped_count += 1;
+                }
+            }
+        }
+
+        info!(
+            "Reaping complete: deleted={}, skipped={}",
+            result.deleted_count, result.skipped_count
+        );
+
+        Ok(result)
+    }
+
+    fn deletion_reason(
+        &self,
+        pvc: &PersistentVolumeClaim,
+        config: &ReaperConfig,
+    ) -> Option<DeleteReason> {
+        let pending_pod = self.pending_unschedulable_pods(pvc)?;
+
+        let pod_name = pending_pod.name_any();
+        if let Some(node) = self.missing_node(pvc) {
+            return Some(DeleteReason::MissingNode {
+                node,
+                pod: pod_name,
+            });
+        }
+
+        let threshold = Duration::from_secs(config.pending_pod_threshold_secs);
+        pod_exceeds_pending_thresh(pending_pod, threshold, self.now)
+            .then(|| DeleteReason::PendingTooLong { pod: pod_name })
+    }
+
+    fn pending_unschedulable_pods<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
+        let pvc_name = pvc.name_any();
+
+        let pod = self.pods.iter().find(|p| pod_uses_pvc(p, &pvc_name))?;
+
+        if !pod_is_pending(pod) {
+            return None;
+        }
+
+        if !pod_is_unschedulable(pod) {
+            info!("Pod {} is pending but not unschedulable", pod.name_any());
+            return None;
+        }
+
+        info!("Pod {} is pending and not unschedulable", pod.name_any());
+
+        Some(pod)
+    }
+
+    fn missing_node(&self, pvc: &PersistentVolumeClaim) -> Option<String> {
+        let node = get_selected_node(pvc)?;
+        if self.node_names.contains(node) {
+            None
+        } else {
+            Some(node.to_string())
+        }
+    }
+
+    async fn perform_delete(
+        &self,
+        client: &Client,
+        config: &ReaperConfig,
+        namespace: &str,
+        name: &str,
+        reason: &str,
+    ) -> Result<()> {
+        if config.dry_run {
+            info!(
+                "[DRY RUN] Would delete PVC {}/{} ({})",
+                namespace, name, reason
+            );
+            return Ok(());
+        }
+
+        delete_pvc(client, namespace, name).await
+    }
+}
+
+#[derive(Debug)]
+enum DeleteReason {
+    MissingNode { node: String, pod: String },
+    PendingTooLong { pod: String },
+}
+
+impl DeleteReason {
+    fn describe(&self) -> String {
+        match self {
+            Self::MissingNode { node, pod } => {
+                format!("pod '{}' references missing node '{}'", pod, node)
+            }
+            Self::PendingTooLong { pod } => {
+                format!(
+                    "pod '{}' has been pending past the configured threshold",
+                    pod
+                )
+            }
+        }
     }
 }
 
@@ -85,146 +245,20 @@ fn get_selected_node(pvc: &PersistentVolumeClaim) -> Option<&str> {
 pub async fn reap(client: &Client, config: &ReaperConfig) -> Result<ReapResult> {
     info!("Starting reaping cycle");
 
-    let node_inventory = get_node_inventory(client).await?;
+    if !config.check_pending_pods {
+        info!("Pending pod checks disabled - skipping reaping");
+        return Ok(ReapResult::default());
+    }
+
+    let state = State::new(client).await?;
     info!(
-        "Found {} nodes ({} schedulable)",
-        node_inventory.available.len(),
-        node_inventory.schedulable.len()
+        "Loaded state: {} nodes, {} pods, {} PVCs",
+        state.nodes.len(),
+        state.pods.len(),
+        state.pvcs.len()
     );
 
-    let pvcs = Api::<PersistentVolumeClaim>::all(client.clone())
-        .list(&ListParams::default())
-        .await
-        .context("Failed to list PVCs")?;
-
-    let mut result = ReapResult::default();
-
-    for pvc in pvcs.items {
-        if should_delete_pvc(&pvc, node_inventory.available_nodes(), config) {
-            let ns = pvc.namespace().unwrap_or_default();
-            let name = pvc.name_any();
-            let node = get_selected_node(&pvc).unwrap_or("unknown");
-
-            info!(
-                "PVC {}/{} references missing node '{}' - marking for deletion",
-                ns, name, node
-            );
-
-            if config.dry_run {
-                info!("[DRY RUN] Would delete PVC {}/{}", ns, name);
-                result.deleted_count += 1;
-            } else if let Err(e) = delete_pvc(client, &ns, &name).await {
-                error!("Failed to delete PVC {}/{}: {:#}", ns, name, e);
-            } else {
-                info!("Successfully deleted PVC {}/{}", ns, name);
-                result.deleted_count += 1;
-            }
-        } else if matches_storage_criteria(&pvc, config) {
-            result.skipped_count += 1;
-        }
-    }
-
-    info!(
-        "Reaping complete: deleted={}, skipped={}",
-        result.deleted_count, result.skipped_count
-    );
-
-    if config.check_pending_pods {
-        if let Err(e) = check_pending_pods(client, config, &node_inventory).await {
-            error!("Error checking pending pods: {:#}", e);
-        }
-    }
-
-    Ok(result)
-}
-
-async fn get_node_inventory(client: &Client) -> Result<NodeInventory> {
-    let nodes = Api::<Node>::all(client.clone())
-        .list(&ListParams::default())
-        .await
-        .context("Failed to list nodes")?;
-
-    let mut inventory = NodeInventory::default();
-    for node in nodes.items {
-        let name = node.name_any();
-        inventory.available.insert(name.clone());
-
-        if is_node_schedulable(&node) {
-            inventory.schedulable.insert(name);
-        } else if let Some(reason) = node_unavailable_reason(&node) {
-            inventory.unschedulable_reasons.insert(name, reason);
-        } else {
-            inventory
-                .unschedulable_reasons
-                .insert(name, "Node schedulability unknown".to_string());
-        }
-    }
-
-    Ok(inventory)
-}
-
-fn is_node_schedulable(node: &Node) -> bool {
-    let cordoned = node
-        .spec
-        .as_ref()
-        .and_then(|spec| spec.unschedulable)
-        .unwrap_or(false);
-    if cordoned {
-        return false;
-    }
-
-    node.status
-        .as_ref()
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conds| conds.iter().find(|c| c.type_ == "Ready"))
-        .map(|cond| cond.status == "True")
-        .unwrap_or(false)
-}
-
-fn node_unavailable_reason(node: &Node) -> Option<String> {
-    let mut reasons = Vec::new();
-    if node
-        .spec
-        .as_ref()
-        .and_then(|spec| spec.unschedulable)
-        .unwrap_or(false)
-    {
-        reasons.push("cordoned".to_string());
-    }
-
-    match node
-        .status
-        .as_ref()
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conds| conds.iter().find(|c| c.type_ == "Ready"))
-    {
-        Some(cond) if cond.status != "True" => {
-            let cause = cond.reason.as_deref().unwrap_or("NotReady");
-            reasons.push(format!("Ready={}", cause));
-        }
-        None => reasons.push("Ready condition missing".to_string()),
-        _ => {}
-    }
-
-    if reasons.is_empty() {
-        None
-    } else {
-        Some(reasons.join(", "))
-    }
-}
-
-pub fn should_delete_pvc(
-    pvc: &PersistentVolumeClaim,
-    available_nodes: &HashSet<String>,
-    config: &ReaperConfig,
-) -> bool {
-    if !matches_storage_criteria(pvc, config) {
-        return false;
-    }
-
-    get_selected_node(pvc)
-        .map(|node| !available_nodes.contains(node))
-        .unwrap_or(false)
+    state.reap(client, config).await
 }
 
 pub fn matches_storage_criteria(pvc: &PersistentVolumeClaim, config: &ReaperConfig) -> bool {
@@ -241,95 +275,30 @@ pub fn matches_storage_criteria(pvc: &PersistentVolumeClaim, config: &ReaperConf
     )
 }
 
-async fn check_pending_pods(
-    client: &Client,
-    config: &ReaperConfig,
-    nodes: &NodeInventory,
-) -> Result<()> {
-    info!("Checking for pending pods with unschedulable PVCs");
-
-    let pods = Api::<Pod>::all(client.clone())
-        .list(&ListParams::default())
-        .await
-        .context("Failed to list pods")?;
-
-    let threshold = Duration::from_secs(config.pending_pod_threshold_secs);
-
-    for pod in pods.items {
-        if !is_pod_pending_long_enough(&pod, threshold) || !is_pod_unschedulable(&pod) {
-            continue;
-        }
-
-        let ns = pod.namespace().unwrap_or_default();
-        let pod_name = pod.name_any();
-        let pvc_api: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), &ns);
-
-        for pvc_name in get_pod_pvc_names(&pod) {
-            let pvc = match pvc_api.get(&pvc_name).await {
-                Ok(pvc) => pvc,
-                Err(_) => continue,
-            };
-
-            let delete_reason = if should_delete_pvc(&pvc, nodes.available_nodes(), config) {
-                Some(PendingDeleteReason::MissingNode {
-                    node: get_selected_node(&pvc).unwrap_or("unknown").to_string(),
-                })
-            } else {
-                pvc_on_unavailable_node(&pvc, nodes)
-                    .map(|(node, reason)| PendingDeleteReason::UnavailableNode { node, reason })
-            };
-
-            if let Some(reason) = delete_reason {
-                let description = reason.describe();
-                warn!(
-                    "Pod {}/{} is pending and references PVC {} whose {}",
-                    ns, pod_name, pvc_name, description
-                );
-
-                if config.dry_run {
-                    info!(
-                        "[DRY RUN] Would delete PVC {}/{} ({})",
-                        ns, pvc_name, description
-                    );
-                } else if let Err(e) = delete_pvc(client, &ns, &pvc_name).await {
-                    error!("Failed to delete PVC {}/{}: {:#}", ns, pvc_name, e);
-                } else {
-                    info!(
-                        "Deleted PVC {}/{} due to pending pod ({})",
-                        ns, pvc_name, description
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
+fn pod_uses_pvc(pod: &Pod, pvc_name: &str) -> bool {
+    get_pod_pvc_names(pod)
+        .iter()
+        .any(|claim_name| claim_name == pvc_name)
 }
 
-fn is_pod_pending_long_enough(pod: &Pod, threshold: Duration) -> bool {
-    if !pod
-        .status
+fn pod_is_pending(pod: &Pod) -> bool {
+    pod.status
         .as_ref()
-        .and_then(|s| s.phase.as_deref())
+        .and_then(|status| status.phase.as_deref())
         .is_some_and(|phase| phase == "Pending")
-    {
-        return false;
-    }
-
-    info!("Found pending pod: {}", pod.name_any());
-
-    if pod.metadata.creation_timestamp.as_ref().is_some_and(|ts| {
-        chrono::Utc::now().signed_duration_since(ts.0).num_seconds() >= threshold.as_secs() as i64
-    }) {
-        info!("Pod {} has exceeded pending threshold", pod.name_any());
-        return true;
-    } else {
-        info!("Pod {} has not exceeded pending threshold", pod.name_any());
-        return false;
-    }
 }
 
-fn is_pod_unschedulable(pod: &Pod) -> bool {
+fn pod_exceeds_pending_thresh(pod: &Pod, threshold: Duration, now: DateTime<Utc>) -> bool {
+    if !pod_is_pending(pod) {
+        return false;
+    }
+
+    pod.metadata.creation_timestamp.as_ref().is_some_and(|ts| {
+        now.signed_duration_since(ts.0).num_seconds() >= threshold.as_secs() as i64
+    })
+}
+
+fn pod_is_unschedulable(pod: &Pod) -> bool {
     pod.status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
@@ -341,43 +310,6 @@ fn is_pod_unschedulable(pod: &Pod) -> bool {
             })
         })
         .is_some()
-}
-
-fn pvc_on_unavailable_node(
-    pvc: &PersistentVolumeClaim,
-    nodes: &NodeInventory,
-) -> Option<(String, Option<String>)> {
-    let node = get_selected_node(pvc)?;
-    if !nodes.available.contains(node) || nodes.schedulable.contains(node) {
-        return None;
-    }
-
-    Some((
-        node.to_string(),
-        nodes.unschedulable_reasons.get(node).cloned(),
-    ))
-}
-
-enum PendingDeleteReason {
-    MissingNode {
-        node: String,
-    },
-    UnavailableNode {
-        node: String,
-        reason: Option<String>,
-    },
-}
-
-impl PendingDeleteReason {
-    fn describe(&self) -> String {
-        match self {
-            Self::MissingNode { node } => format!("selected node '{}' no longer exists", node),
-            Self::UnavailableNode { node, reason } => match reason {
-                Some(r) => format!("selected node '{}' is unavailable ({})", node, r),
-                None => format!("selected node '{}' is unavailable", node),
-            },
-        }
-    }
 }
 
 fn get_pod_pvc_names(pod: &Pod) -> Vec<String> {
@@ -406,10 +338,9 @@ pub async fn delete_pvc(client: &Client, namespace: &str, name: &str) -> Result<
 mod tests {
     use super::*;
     use k8s_openapi::{
-        api::core::v1::{NodeSpec, PodCondition, PodStatus},
+        api::core::v1::{PersistentVolumeClaimVolumeSource, PodCondition, PodStatus, Volume},
         apimachinery::pkg::apis::meta::v1::{ObjectMeta, Time},
     };
-    use std::collections::BTreeMap;
 
     fn test_pvc(
         name: &str,
@@ -417,7 +348,7 @@ mod tests {
         provisioner: &str,
         selected_node: Option<&str>,
     ) -> PersistentVolumeClaim {
-        let mut annotations = BTreeMap::new();
+        let mut annotations = std::collections::BTreeMap::new();
         annotations.insert(PROVISIONER_ANNOTATION.to_string(), provisioner.to_string());
         if let Some(node) = selected_node {
             annotations.insert(SELECTED_NODE_ANNOTATION.to_string(), node.to_string());
@@ -444,27 +375,61 @@ mod tests {
             storage_provisioner: "local.csi.openebs.io".to_string(),
             reap_interval_secs: 60,
             dry_run: false,
-            check_pending_pods: false,
+            check_pending_pods: true,
             pending_pod_threshold_secs: 300,
         }
     }
 
-    fn nodes(names: &[&str]) -> HashSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
+    fn state_with(node_names: &[&str], pods: Vec<Pod>, pvcs: Vec<PersistentVolumeClaim>) -> State {
+        let nodes = node_names
+            .iter()
+            .map(|name| Node {
+                metadata: ObjectMeta {
+                    name: Some((*name).to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        State {
+            node_names: node_names.iter().map(|s| s.to_string()).collect(),
+            nodes,
+            pods,
+            pvcs,
+            now: Utc::now(),
+        }
     }
 
-    fn pending_pod(condition_reason: Option<&str>, creation_offset_secs: i64) -> Pod {
+    fn pod_with_pvc(
+        pod_name: &str,
+        pvc_name: &str,
+        phase: &str,
+        condition_reason: Option<&str>,
+        creation_offset_secs: i64,
+    ) -> Pod {
         Pod {
             metadata: ObjectMeta {
-                name: Some("pending-pod".to_string()),
+                name: Some(pod_name.to_string()),
                 namespace: Some("default".to_string()),
                 creation_timestamp: Some(Time(
                     chrono::Utc::now() - chrono::Duration::seconds(creation_offset_secs),
                 )),
                 ..Default::default()
             },
+            spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                volumes: Some(vec![Volume {
+                    name: "data".to_string(),
+                    persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                        claim_name: pvc_name.to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
             status: Some(PodStatus {
-                phase: Some("Pending".to_string()),
+                phase: Some(phase.to_string()),
                 conditions: condition_reason.map(|reason| {
                     vec![PodCondition {
                         type_: "PodScheduled".to_string(),
@@ -477,76 +442,6 @@ mod tests {
             }),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn test_should_delete_pvc_with_missing_node() {
-        let pvc = test_pvc(
-            "test",
-            "openebs-lvm",
-            "local.csi.openebs.io",
-            Some("missing-node"),
-        );
-        assert!(should_delete_pvc(
-            &pvc,
-            &nodes(&["node-1", "node-2"]),
-            &test_config()
-        ));
-    }
-
-    #[test]
-    fn test_should_not_delete_pvc_with_existing_node() {
-        let pvc = test_pvc(
-            "test",
-            "openebs-lvm",
-            "local.csi.openebs.io",
-            Some("node-1"),
-        );
-        assert!(!should_delete_pvc(
-            &pvc,
-            &nodes(&["node-1", "node-2"]),
-            &test_config()
-        ));
-    }
-
-    #[test]
-    fn test_should_not_delete_pvc_without_selected_node() {
-        let pvc = test_pvc("test", "openebs-lvm", "local.csi.openebs.io", None);
-        assert!(!should_delete_pvc(
-            &pvc,
-            &nodes(&["node-1"]),
-            &test_config()
-        ));
-    }
-
-    #[test]
-    fn test_should_not_delete_pvc_with_wrong_storage_class() {
-        let pvc = test_pvc(
-            "test",
-            "other-class",
-            "local.csi.openebs.io",
-            Some("missing-node"),
-        );
-        assert!(!should_delete_pvc(
-            &pvc,
-            &nodes(&["node-1"]),
-            &test_config()
-        ));
-    }
-
-    #[test]
-    fn test_should_not_delete_pvc_with_wrong_provisioner() {
-        let pvc = test_pvc(
-            "test",
-            "openebs-lvm",
-            "other.provisioner",
-            Some("missing-node"),
-        );
-        assert!(!should_delete_pvc(
-            &pvc,
-            &nodes(&["node-1"]),
-            &test_config()
-        ));
     }
 
     #[test]
@@ -574,123 +469,84 @@ mod tests {
     }
 
     #[test]
-    fn test_pod_pending_long_enough_without_start_time() {
-        let pod = pending_pod(Some("Unschedulable"), 600);
-        assert!(is_pod_pending_long_enough(&pod, Duration::from_secs(300)));
+    fn test_pod_pending_long_enough_with_unschedulable_condition() {
+        let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 600);
+        assert!(pod_exceeds_pending_thresh(
+            &pod,
+            Duration::from_secs(300),
+            Utc::now()
+        ));
     }
 
     #[test]
     fn test_pod_pending_not_long_enough() {
-        let pod = pending_pod(Some("Unschedulable"), 60);
-        assert!(!is_pod_pending_long_enough(&pod, Duration::from_secs(300)));
+        let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 60);
+        assert!(!pod_exceeds_pending_thresh(
+            &pod,
+            Duration::from_secs(300),
+            Utc::now()
+        ));
     }
 
     #[test]
-    fn test_pod_unschedulable_condition_detected() {
-        let pod = pending_pod(Some("Unschedulable"), 600);
-        assert!(is_pod_unschedulable(&pod));
-    }
-
-    #[test]
-    fn test_pod_unschedulable_condition_not_detected_when_reason_differs() {
-        let pod = pending_pod(Some("OtherReason"), 600);
-        assert!(!is_pod_unschedulable(&pod));
-    }
-
-    #[test]
-    fn test_pvc_on_unavailable_node_detected() {
+    fn test_deletion_reason_when_node_missing() {
         let pvc = test_pvc(
             "test",
             "openebs-lvm",
             "local.csi.openebs.io",
-            Some("node-1"),
+            Some("missing-node"),
         );
-        let mut inventory = NodeInventory::default();
-        inventory.available.insert("node-1".to_string());
-        inventory
-            .unschedulable_reasons
-            .insert("node-1".to_string(), "cordoned".to_string());
+        let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 10);
 
-        let result = pvc_on_unavailable_node(&pvc, &inventory)
-            .expect("expected node to be flagged as unavailable");
-        assert_eq!(result.0, "node-1".to_string());
-        assert_eq!(result.1.as_deref(), Some("cordoned"));
-    }
+        let state = state_with(&[], vec![pod], vec![pvc.clone()]);
 
-    #[test]
-    fn test_pvc_on_unavailable_node_ignored_when_schedulable() {
-        let pvc = test_pvc(
-            "test",
-            "openebs-lvm",
-            "local.csi.openebs.io",
-            Some("node-1"),
-        );
-        let mut inventory = NodeInventory::default();
-        inventory.available.insert("node-1".to_string());
-        inventory.schedulable.insert("node-1".to_string());
-        assert!(pvc_on_unavailable_node(&pvc, &inventory).is_none());
-    }
+        let reason = state
+            .deletion_reason(&pvc, &test_config())
+            .expect("expected deletion reason");
 
-    fn node_with_status(
-        name: &str,
-        ready_status: Option<&str>,
-        ready_reason: Option<&str>,
-        unschedulable: bool,
-    ) -> Node {
-        Node {
-            metadata: ObjectMeta {
-                name: Some(name.to_string()),
-                ..Default::default()
-            },
-            spec: Some(NodeSpec {
-                unschedulable: Some(unschedulable),
-                ..Default::default()
-            }),
-            status: Some(k8s_openapi::api::core::v1::NodeStatus {
-                conditions: ready_status.map(|status| {
-                    vec![k8s_openapi::api::core::v1::NodeCondition {
-                        type_: "Ready".to_string(),
-                        status: status.to_string(),
-                        reason: ready_reason.map(|r| r.to_string()),
-                        ..Default::default()
-                    }]
-                }),
-                ..Default::default()
-            }),
+        match reason {
+            DeleteReason::MissingNode { node, pod } => {
+                assert_eq!(node, "missing-node");
+                assert_eq!(pod, "pending-pod");
+            }
+            _ => panic!("expected missing node reason"),
         }
     }
 
     #[test]
-    fn test_node_schedulable_when_ready_true_and_not_cordoned() {
-        let node = node_with_status("node-a", Some("True"), None, false);
-        assert!(is_node_schedulable(&node));
-        assert!(node_unavailable_reason(&node).is_none());
-    }
-
-    #[test]
-    fn test_node_not_schedulable_when_cordoned() {
-        let node = node_with_status("node-b", Some("True"), None, true);
-        assert!(!is_node_schedulable(&node));
-        assert_eq!(node_unavailable_reason(&node), Some("cordoned".to_string()));
-    }
-
-    #[test]
-    fn test_node_not_schedulable_when_not_ready() {
-        let node = node_with_status("node-c", Some("False"), Some("KubeletNotReady"), false);
-        assert!(!is_node_schedulable(&node));
-        assert_eq!(
-            node_unavailable_reason(&node),
-            Some("Ready=KubeletNotReady".to_string())
+    fn test_deletion_reason_when_pending_too_long() {
+        let pvc = test_pvc(
+            "test",
+            "openebs-lvm",
+            "local.csi.openebs.io",
+            Some("node-1"),
         );
+        let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 601);
+
+        let state = state_with(&["node-1"], vec![pod], vec![pvc.clone()]);
+
+        let reason = state
+            .deletion_reason(&pvc, &test_config())
+            .expect("expected deletion reason");
+
+        match reason {
+            DeleteReason::PendingTooLong { pod } => assert_eq!(pod, "pending-pod"),
+            _ => panic!("expected pending too long reason"),
+        }
     }
 
     #[test]
-    fn test_node_not_schedulable_when_condition_missing() {
-        let node = node_with_status("node-d", None, None, false);
-        assert!(!is_node_schedulable(&node));
-        assert_eq!(
-            node_unavailable_reason(&node),
-            Some("Ready condition missing".to_string())
+    fn test_deletion_reason_skips_when_pod_not_unschedulable() {
+        let pvc = test_pvc(
+            "test",
+            "openebs-lvm",
+            "local.csi.openebs.io",
+            Some("node-1"),
         );
+        let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("OtherReason"), 600);
+
+        let state = state_with(&["node-1"], vec![pod], vec![pvc.clone()]);
+
+        assert!(state.deletion_reason(&pvc, &test_config()).is_none());
     }
 }
