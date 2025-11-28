@@ -14,7 +14,7 @@ WARNING: Running in DRY RUN mode - no PVCs will be deleted!
 {{- end }}
 
 Configuration:
-- Reconcile interval: {{ .Values.config.reconcileIntervalSecs }}s
+- Reap interval: {{ .Values.config.reapIntervalSecs }}s
 - Pending pod threshold: {{ .Values.config.pendingPodThresholdSecs }}s
 - Log level: {{ .Values.logLevel }}
 

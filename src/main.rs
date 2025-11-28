@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use kube::Client;
-use pvc_reaper::{reconcile, ReaperConfig};
+use pvc_reaper::{reap, ReaperConfig};
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     info!("Starting pvc-reaper");
     info!("Storage class names: {}", config.storage_classes.join(","));
     info!("Storage provisioner: {}", config.storage_provisioner);
-    info!("Reconcile interval: {}s", config.reconcile_interval_secs);
+    info!("Reap interval: {}s", config.reap_interval_secs);
     info!("Dry run: {}", config.dry_run);
     info!("Check pending pods: {}", config.check_pending_pods);
 
@@ -28,10 +28,10 @@ async fn main() -> Result<()> {
         .context("Failed to create Kubernetes client")?;
 
     loop {
-        if let Err(e) = reconcile(&client, &config).await {
-            error!("Reconciliation error: {:#}", e);
+        if let Err(e) = reap(&client, &config).await {
+            error!("Reaping error: {:#}", e);
         }
 
-        tokio::time::sleep(Duration::from_secs(config.reconcile_interval_secs)).await;
+        tokio::time::sleep(Duration::from_secs(config.reap_interval_secs)).await;
     }
 }

@@ -63,13 +63,13 @@ helm install pvc-reaper ./helm/pvc-reaper \
   --set config.storageClassNames="openebs-lvm,local-storage,ebs-sc"
 ```
 
-### Example 2: Custom Reconcile Interval
+### Example 2: Custom Reap Interval
 
 ```bash
 helm install pvc-reaper ./helm/pvc-reaper \
   --namespace pvc-reaper \
   --create-namespace \
-  --set config.reconcileIntervalSecs=30 \
+  --set config.reapIntervalSecs=30 \
   --set config.pendingPodThresholdSecs=600
 ```
 

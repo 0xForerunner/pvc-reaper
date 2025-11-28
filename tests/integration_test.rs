@@ -176,7 +176,7 @@ impl TestCluster {
         Ok(())
     }
 
-    async fn install_pvc_reaper(&self, reconcile_interval: u64) -> TestResult<()> {
+    async fn install_pvc_reaper(&self, reap_interval: u64) -> TestResult<()> {
         // Build the Docker image
         println!("Building Docker image...");
         let output = Command::new("docker")
@@ -263,7 +263,7 @@ impl TestCluster {
                 "--set",
                 "image.pullPolicy=Never",
                 "--set",
-                &format!("config.reconcileIntervalSecs={reconcile_interval}"),
+                &format!("config.reapIntervalSecs={reap_interval}"),
                 "--set",
                 &format!("config.storageClassNames={STORAGE_CLASS}"),
                 "--set",
@@ -482,7 +482,7 @@ impl<'a> TestNamespace<'a> {
 async fn test_helm_deployment_deletes_orphaned_pvcs() {
     let cluster = TestCluster::new().await.expect("Failed to create cluster");
 
-    // Install pvc-reaper with 5-second reconcile interval for faster testing
+    // Install pvc-reaper with 5-second reap interval for faster testing
     cluster
         .install_pvc_reaper(5)
         .await
@@ -502,7 +502,7 @@ async fn test_helm_deployment_deletes_orphaned_pvcs() {
         "PVC should exist initially"
     );
 
-    // Wait for pvc-reaper to delete it (give it 30 seconds with 5s reconcile interval)
+    // Wait for pvc-reaper to delete it (give it 30 seconds with 5s reap interval)
     let deleted = ns.wait_for_pvc_deletion("orphaned-pvc", 30).await;
     assert!(deleted, "PVC should have been deleted by pvc-reaper");
 
@@ -536,7 +536,7 @@ async fn test_helm_deployment_keeps_valid_pvcs() {
 
     assert!(ns.pvc_exists("valid-pvc").await);
 
-    // Wait a couple reconcile cycles and verify PVC still exists
+    // Wait a couple reap cycles and verify PVC still exists
     tokio::time::sleep(Duration::from_secs(15)).await;
     assert!(
         ns.pvc_exists("valid-pvc").await,
@@ -611,7 +611,7 @@ async fn test_helm_deployment_mixed_scenarios() {
         .await
         .unwrap();
 
-    // Wait for reconciliation
+    // Wait for reaping
     tokio::time::sleep(Duration::from_secs(20)).await;
 
     // Verify final state

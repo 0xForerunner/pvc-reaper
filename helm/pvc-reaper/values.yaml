@@ -52,8 +52,8 @@ config:
   # Storage provisioner annotation value to filter PVCs
   storageProvisioner: "local.csi.openebs.io"
 
-  # Interval between reconciliation loops in seconds
-  reconcileIntervalSecs: 60
+  # Interval between reaping loops in seconds
+  reapIntervalSecs: 60
 
   # Dry run mode - don't actually delete PVCs
   dryRun: false

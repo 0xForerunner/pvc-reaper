@@ -36,8 +36,8 @@ spec:
           value: {{ .Values.config.storageClassNames | quote }}
         - name: STORAGE_PROVISIONER
           value: {{ .Values.config.storageProvisioner | quote }}
-        - name: RECONCILE_INTERVAL_SECS
-          value: {{ .Values.config.reconcileIntervalSecs | quote }}
+        - name: REAP_INTERVAL_SECS
+          value: {{ .Values.config.reapIntervalSecs | quote }}
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}
         - name: CHECK_PENDING_PODS

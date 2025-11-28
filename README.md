@@ -14,7 +14,7 @@ PVC Reaper is designed primarily for OpenEBS workflows that use ephemeral local 
 
 ## Features
 
-- Continuous reconciliation loop that watches all namespaces
+- Continuous reaping loop that watches all namespaces
 - Configurable storage class and provisioner filters
 - Optional pending pod detection with configurable thresholds
 - Dry-run mode plus structured logging for confidence in production
@@ -58,7 +58,7 @@ Tune the controller via Helm values or the matching environment variables:
 |------------|---------|---------|-------------|
 | `config.storageClassNames` | `STORAGE_CLASS_NAMES` | `openebs-lvm` | Comma-separated list of storage classes to watch |
 | `config.storageProvisioner` | `STORAGE_PROVISIONER` | `local.csi.openebs.io` | Provisioner annotation used to filter PVCs |
-| `config.reconcileIntervalSecs` | `RECONCILE_INTERVAL_SECS` | `60` | Seconds between reconciliation loops |
+| `config.reapIntervalSecs` | `REAP_INTERVAL_SECS` | `60` | Seconds between reaping loops |
 | `config.dryRun` | `DRY_RUN` | `false` | Log actions without deleting PVCs |
 | `config.checkPendingPods` | `CHECK_PENDING_PODS` | `true` | Enable pending pod scanning |
 | `config.pendingPodThresholdSecs` | `PENDING_POD_THRESHOLD_SECS` | `300` | How long a pod must be pending before action |
@@ -70,7 +70,7 @@ Minimal values example:
 config:
   storageClassNames: "openebs-lvm,local-storage"
   storageProvisioner: "local.csi.openebs.io"
-  reconcileIntervalSecs: 30
+  reapIntervalSecs: 30
   dryRun: false
   checkPendingPods: true
   pendingPodThresholdSecs: 300

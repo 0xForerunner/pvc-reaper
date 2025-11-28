@@ -32,9 +32,9 @@ pub struct ReaperConfig {
     )]
     pub storage_provisioner: String,
 
-    /// Interval between reconciliation loops in seconds
-    #[arg(long, env = "RECONCILE_INTERVAL_SECS", default_value_t = 60)]
-    pub reconcile_interval_secs: u64,
+    /// Interval between reaping loops in seconds
+    #[arg(long, env = "REAP_INTERVAL_SECS", default_value_t = 60)]
+    pub reap_interval_secs: u64,
 
     /// Dry run mode - don't actually delete PVCs
     #[arg(long, env = "DRY_RUN", default_value_t = false)]
@@ -50,7 +50,7 @@ pub struct ReaperConfig {
 }
 
 #[derive(Debug, Default)]
-pub struct ReconcileResult {
+pub struct ReapResult {
     pub deleted_count: usize,
     pub skipped_count: usize,
 }
@@ -82,8 +82,8 @@ fn get_selected_node(pvc: &PersistentVolumeClaim) -> Option<&str> {
     get_pvc_annotation(pvc, SELECTED_NODE_ANNOTATION)
 }
 
-pub async fn reconcile(client: &Client, config: &ReaperConfig) -> Result<ReconcileResult> {
-    info!("Starting reconciliation cycle");
+pub async fn reap(client: &Client, config: &ReaperConfig) -> Result<ReapResult> {
+    info!("Starting reaping cycle");
 
     let node_inventory = get_node_inventory(client).await?;
     info!(
@@ -97,7 +97,7 @@ pub async fn reconcile(client: &Client, config: &ReaperConfig) -> Result<Reconci
         .await
         .context("Failed to list PVCs")?;
 
-    let mut result = ReconcileResult::default();
+    let mut result = ReapResult::default();
 
     for pvc in pvcs.items {
         if should_delete_pvc(&pvc, node_inventory.available_nodes(), config) {
@@ -125,7 +125,7 @@ pub async fn reconcile(client: &Client, config: &ReaperConfig) -> Result<Reconci
     }
 
     info!(
-        "Reconciliation complete: deleted={}, skipped={}",
+        "Reaping complete: deleted={}, skipped={}",
         result.deleted_count, result.skipped_count
     );
 
@@ -434,7 +434,7 @@ mod tests {
         ReaperConfig {
             storage_classes: vec!["openebs-lvm".to_string()],
             storage_provisioner: "local.csi.openebs.io".to_string(),
-            reconcile_interval_secs: 60,
+            reap_interval_secs: 60,
             dry_run: false,
             check_pending_pods: false,
             pending_pod_threshold_secs: 300,
