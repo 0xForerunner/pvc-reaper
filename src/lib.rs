@@ -316,9 +316,17 @@ fn is_pod_pending_long_enough(pod: &Pod, threshold: Duration) -> bool {
         return false;
     }
 
-    pod.metadata.creation_timestamp.as_ref().is_some_and(|ts| {
+    info!("Found pending pod: {}", pod.name_any());
+
+    if pod.metadata.creation_timestamp.as_ref().is_some_and(|ts| {
         chrono::Utc::now().signed_duration_since(ts.0).num_seconds() >= threshold.as_secs() as i64
-    })
+    }) {
+        info!("Pod {} has exceeded pending threshold", pod.name_any());
+        return true;
+    } else {
+        info!("Pod {} has not exceeded pending threshold", pod.name_any());
+        return false;
+    }
 }
 
 fn is_pod_unschedulable(pod: &Pod) -> bool {
