@@ -40,9 +40,9 @@ spec:
           value: {{ .Values.config.reapIntervalSecs | quote }}
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}
-        - name: CHECK_PENDING_PODS
+        - name: CHECK_UNSCHEDULABLE_PODS
           value: {{ .Values.config.checkPendingPods | quote }}
-        - name: PENDING_POD_THRESHOLD_SECS
+        - name: UNSCHEDULABLE_POD_THRESHOLD_SECS
           value: {{ .Values.config.pendingPodThresholdSecs | quote }}
         - name: RUST_LOG
           value: {{ .Values.logLevel }}

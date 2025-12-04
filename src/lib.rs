@@ -8,7 +8,7 @@ use kube::{
 };
 use std::collections::HashSet;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 const SELECTED_NODE_ANNOTATION: &str = "volume.kubernetes.io/selected-node";
 const PROVISIONER_ANNOTATION: &str = "volume.beta.kubernetes.io/storage-provisioner";
@@ -42,12 +42,12 @@ pub struct ReaperConfig {
     pub dry_run: bool,
 
     /// Check for pending pods with unschedulable PVCs
-    #[arg(long, env = "CHECK_PENDING_PODS", default_value_t = true)]
-    pub check_pending_pods: bool,
+    #[arg(long, env = "CHECK_UNSCHEDULABLE_PODS", default_value_t = true)]
+    pub check_unschedulable_pods: bool,
 
     /// How long a pod must be pending before considering its PVC for deletion (seconds)
-    #[arg(long, env = "PENDING_POD_THRESHOLD_SECS", default_value_t = 300)]
-    pub pending_pod_threshold_secs: u64,
+    #[arg(long, env = "UNSCHEDULABLE_POD_THRESHOLD_SECS", default_value_t = 120)]
+    pub unschedulable_pod_threshold_secs: u64,
 }
 
 #[derive(Debug, Default)]
@@ -110,7 +110,7 @@ impl State {
             match self.deletion_reason(pvc, config) {
                 Some(reason) => {
                     let description = reason.describe();
-                    warn!(
+                    info!(
                         "PVC {}/{} scheduled for deletion: {}",
                         namespace, pvc_name, description
                     );
@@ -143,9 +143,9 @@ impl State {
         pvc: &PersistentVolumeClaim,
         config: &ReaperConfig,
     ) -> Option<DeleteReason> {
-        let pending_pod = self.pending_unschedulable_pods(pvc)?;
-
+        let pending_pod = self.pending_unschedulable_pod(pvc)?;
         let pod_name = pending_pod.name_any();
+
         if let Some(node) = self.missing_node(pvc) {
             return Some(DeleteReason::MissingNode {
                 node,
@@ -153,12 +153,16 @@ impl State {
             });
         }
 
-        let threshold = Duration::from_secs(config.pending_pod_threshold_secs);
-        pod_exceeds_pending_thresh(pending_pod, threshold, self.now)
-            .then(|| DeleteReason::PendingTooLong { pod: pod_name })
+        if config.check_unschedulable_pods {
+            let threshold = Duration::from_secs(config.unschedulable_pod_threshold_secs);
+            return pod_exceeds_pending_thresh(pending_pod, threshold, self.now)
+                .then(|| DeleteReason::PendingTooLong { pod: pod_name });
+        }
+
+        None
     }
 
-    fn pending_unschedulable_pods<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
+    fn pending_unschedulable_pod<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
         let pvc_name = pvc.name_any();
 
         let pod = self.pods.iter().find(|p| pod_uses_pvc(p, &pvc_name))?;
@@ -172,7 +176,7 @@ impl State {
             return None;
         }
 
-        info!("Pod {} is pending and not unschedulable", pod.name_any());
+        info!("Pod {} is unschedulable", pod.name_any());
 
         Some(pod)
     }
@@ -243,13 +247,6 @@ fn get_selected_node(pvc: &PersistentVolumeClaim) -> Option<&str> {
 }
 
 pub async fn reap(client: &Client, config: &ReaperConfig) -> Result<ReapResult> {
-    info!("Starting reaping cycle");
-
-    if !config.check_pending_pods {
-        info!("Pending pod checks disabled - skipping reaping");
-        return Ok(ReapResult::default());
-    }
-
     let state = State::new(client).await?;
     info!(
         "Loaded state: {} nodes, {} pods, {} PVCs",
@@ -375,8 +372,8 @@ mod tests {
             storage_provisioner: "local.csi.openebs.io".to_string(),
             reap_interval_secs: 60,
             dry_run: false,
-            check_pending_pods: true,
-            pending_pod_threshold_secs: 300,
+            check_unschedulable_pods: true,
+            unschedulable_pod_threshold_secs: 300,
         }
     }
 

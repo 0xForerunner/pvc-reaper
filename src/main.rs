@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     info!("Storage provisioner: {}", config.storage_provisioner);
     info!("Reap interval: {}s", config.reap_interval_secs);
     info!("Dry run: {}", config.dry_run);
-    info!("Check pending pods: {}", config.check_pending_pods);
+    info!("Check pending pods: {}", config.check_unschedulable_pods);
 
     let client = Client::try_default()
         .await

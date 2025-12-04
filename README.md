@@ -60,8 +60,8 @@ Tune the controller via Helm values or the matching environment variables:
 | `config.storageProvisioner` | `STORAGE_PROVISIONER` | `local.csi.openebs.io` | Provisioner annotation used to filter PVCs |
 | `config.reapIntervalSecs` | `REAP_INTERVAL_SECS` | `60` | Seconds between reaping loops |
 | `config.dryRun` | `DRY_RUN` | `false` | Log actions without deleting PVCs |
-| `config.checkPendingPods` | `CHECK_PENDING_PODS` | `true` | Enable pending pod scanning |
-| `config.pendingPodThresholdSecs` | `PENDING_POD_THRESHOLD_SECS` | `300` | How long a pod must be pending before action |
+| `config.checkUnscheduablePods` | `CHECK_UNSCHEDULABLE_PODS` | `true` | Enable unschedulable pod scanning |
+| `config.unschedulablePodThresholdSecs` | `UNSCHEDULABLE_POD_THRESHOLD_SECS` | `120` | How long a pod must be pending before action |
 | `logLevel` | `RUST_LOG` | `info` | Controller log level |
 
 Minimal values example:
