@@ -3,7 +3,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/your-org/pvc-reaper
+  repository: ghcr.io/0xforerunner/pvc-reaper
   pullPolicy: IfNotPresent
   tag: ""  # Overrides the image tag whose default is the chart appVersion
 
@@ -58,11 +58,11 @@ config:
   # Dry run mode - don't actually delete PVCs
   dryRun: false
 
-  # Check for pending pods with unschedulable PVCs
-  checkPendingPods: true
+  # Check for unschedulable pods with unschedulable PVCs
+  checkUnschedulablePods: true
 
-  # How long a pod must be pending before considering its PVC for deletion (seconds)
-  pendingPodThresholdSecs: 300
+  # How long a pod must be unschedulable before considering its PVC for deletion (seconds)
+  unschedulablePodThresholdSecs: 300
 
 # Log level (trace, debug, info, warn, error)
 logLevel: info

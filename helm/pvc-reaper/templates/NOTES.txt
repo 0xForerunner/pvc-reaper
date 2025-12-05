@@ -5,8 +5,8 @@ Your release is named {{ .Release.Name }}.
 PVC Reaper is now running and will:
 - Monitor PVCs with storage class: {{ .Values.config.storageClassNames }}
 - Delete PVCs pointing to missing nodes
-{{- if .Values.config.checkPendingPods }}
-- Check for pending pods with unschedulable PVCs
+{{- if .Values.config.checkUnschedulablePods }}
+- Check for unschedulable pods with unschedulable PVCs
 {{- end }}
 {{- if .Values.config.dryRun }}
 
@@ -15,7 +15,7 @@ WARNING: Running in DRY RUN mode - no PVCs will be deleted!
 
 Configuration:
 - Reap interval: {{ .Values.config.reapIntervalSecs }}s
-- Pending pod threshold: {{ .Values.config.pendingPodThresholdSecs }}s
+- Unschedulable pod threshold: {{ .Values.config.unschedulablePodThresholdSecs }}s
 - Log level: {{ .Values.logLevel }}
 
 To view logs:

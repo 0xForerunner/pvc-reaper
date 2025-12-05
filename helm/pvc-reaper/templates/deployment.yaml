@@ -41,9 +41,9 @@ spec:
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}
         - name: CHECK_UNSCHEDULABLE_PODS
-          value: {{ .Values.config.checkPendingPods | quote }}
+          value: {{ .Values.config.checkUnschedulablePods | quote }}
         - name: UNSCHEDULABLE_POD_THRESHOLD_SECS
-          value: {{ .Values.config.pendingPodThresholdSecs | quote }}
+          value: {{ .Values.config.unschedulablePodThresholdSecs | quote }}
         - name: RUST_LOG
           value: {{ .Values.logLevel }}
         resources:

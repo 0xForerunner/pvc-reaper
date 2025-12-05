@@ -41,11 +41,11 @@ pub struct ReaperConfig {
     #[arg(long, env = "DRY_RUN", default_value_t = false)]
     pub dry_run: bool,
 
-    /// Check for pending pods with unschedulable PVCs
+    /// Check for unschedulable pods with unschedulable PVCs
     #[arg(long, env = "CHECK_UNSCHEDULABLE_PODS", default_value_t = true)]
     pub check_unschedulable_pods: bool,
 
-    /// How long a pod must be pending before considering its PVC for deletion (seconds)
+    /// How long a pod must be unschedulable before considering its PVC for deletion (seconds)
     #[arg(long, env = "UNSCHEDULABLE_POD_THRESHOLD_SECS", default_value_t = 120)]
     pub unschedulable_pod_threshold_secs: u64,
 }
@@ -143,8 +143,8 @@ impl State {
         pvc: &PersistentVolumeClaim,
         config: &ReaperConfig,
     ) -> Option<DeleteReason> {
-        let pending_pod = self.pending_unschedulable_pod(pvc)?;
-        let pod_name = pending_pod.name_any();
+        let unschedulable_pod = self.unschedulable_unschedulable_pod(pvc)?;
+        let pod_name = unschedulable_pod.name_any();
 
         if let Some(node) = self.missing_node(pvc) {
             return Some(DeleteReason::MissingNode {
@@ -155,14 +155,14 @@ impl State {
 
         if config.check_unschedulable_pods {
             let threshold = Duration::from_secs(config.unschedulable_pod_threshold_secs);
-            return pod_exceeds_pending_thresh(pending_pod, threshold, self.now)
-                .then(|| DeleteReason::PendingTooLong { pod: pod_name });
+            return pod_exceeds_unschedulable_thresh(unschedulable_pod, threshold, self.now)
+                .then(|| DeleteReason::UnschedulableTooLong { pod: pod_name });
         }
 
         None
     }
 
-    fn pending_unschedulable_pod<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
+    fn unschedulable_unschedulable_pod<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
         let pvc_name = pvc.name_any();
 
         let pod = self.pods.iter().find(|p| pod_uses_pvc(p, &pvc_name))?;
@@ -213,7 +213,7 @@ impl State {
 #[derive(Debug)]
 enum DeleteReason {
     MissingNode { node: String, pod: String },
-    PendingTooLong { pod: String },
+    UnschedulableTooLong { pod: String },
 }
 
 impl DeleteReason {
@@ -222,7 +222,7 @@ impl DeleteReason {
             Self::MissingNode { node, pod } => {
                 format!("pod '{}' references missing node '{}'", pod, node)
             }
-            Self::PendingTooLong { pod } => {
+            Self::UnschedulableTooLong { pod } => {
                 format!(
                     "pod '{}' has been pending past the configured threshold",
                     pod
@@ -285,7 +285,7 @@ fn pod_is_pending(pod: &Pod) -> bool {
         .is_some_and(|phase| phase == "Pending")
 }
 
-fn pod_exceeds_pending_thresh(pod: &Pod, threshold: Duration, now: DateTime<Utc>) -> bool {
+fn pod_exceeds_unschedulable_thresh(pod: &Pod, threshold: Duration, now: DateTime<Utc>) -> bool {
     if !pod_is_pending(pod) {
         return false;
     }
@@ -466,9 +466,9 @@ mod tests {
     }
 
     #[test]
-    fn test_pod_pending_long_enough_with_unschedulable_condition() {
+    fn test_pod_unschedulable_long_enough_with_unschedulable_condition() {
         let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 600);
-        assert!(pod_exceeds_pending_thresh(
+        assert!(pod_exceeds_unschedulable_thresh(
             &pod,
             Duration::from_secs(300),
             Utc::now()
@@ -476,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pod_pending_not_long_enough() {
+    fn test_pod_unschedulable_not_long_enough() {
         let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 60);
         assert!(!pod_exceeds_pending_thresh(
             &pod,
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn test_deletion_reason_when_pending_too_long() {
+    fn test_deletion_reason_when_unschedulable_too_long() {
         let pvc = test_pvc(
             "test",
             "openebs-lvm",
@@ -527,7 +527,7 @@ mod tests {
             .expect("expected deletion reason");
 
         match reason {
-            DeleteReason::PendingTooLong { pod } => assert_eq!(pod, "pending-pod"),
+            DeleteReason::UnschedulableTooLong { pod } => assert_eq!(pod, "pending-pod"),
             _ => panic!("expected pending too long reason"),
         }
     }

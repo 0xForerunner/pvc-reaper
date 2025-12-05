@@ -70,16 +70,16 @@ helm install pvc-reaper ./helm/pvc-reaper \
   --namespace pvc-reaper \
   --create-namespace \
   --set config.reapIntervalSecs=30 \
-  --set config.pendingPodThresholdSecs=600
+  --set config.unschedulablePodThresholdSecs=600
 ```
 
-### Example 3: Disable Pending Pod Checks
+### Example 3: Disable Unschedulable Pod Checks
 
 ```bash
 helm install pvc-reaper ./helm/pvc-reaper \
   --namespace pvc-reaper \
   --create-namespace \
-  --set config.checkPendingPods=false
+  --set config.checkUnschedulablePods=false
 ```
 
 ## Building from Source
