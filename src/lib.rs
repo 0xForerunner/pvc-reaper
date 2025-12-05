@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use clap::Parser;
 use k8s_openapi::api::core::v1::{Node, PersistentVolumeClaim, Pod};
 use kube::{
-    api::{Api, DeleteParams, ListParams},
     Client, ResourceExt,
+    api::{Api, DeleteParams, ListParams},
 };
 use std::collections::HashSet;
 use std::time::Duration;
@@ -143,7 +143,7 @@ impl State {
         pvc: &PersistentVolumeClaim,
         config: &ReaperConfig,
     ) -> Option<DeleteReason> {
-        let unschedulable_pod = self.unschedulable_pod_for_pvc(pvc)?;
+        let unschedulable_pod = self.unschedulable_pod(pvc)?;
         let pod_name = unschedulable_pod.name_any();
 
         if let Some(node) = self.missing_node(pvc) {
@@ -156,16 +156,13 @@ impl State {
         if config.check_unschedulable_pods {
             let threshold = Duration::from_secs(config.unschedulable_pod_threshold_secs);
             return pod_exceeds_unschedulable_thresh(unschedulable_pod, threshold, self.now)
-                .then(|| DeleteReason::UnschedulableTooLong { pod: pod_name });
+                .then_some(DeleteReason::UnschedulableTooLong { pod: pod_name });
         }
 
         None
     }
 
-    fn unschedulable_pod_for_pvc<'a>(
-        &'a self,
-        pvc: &'a PersistentVolumeClaim,
-    ) -> Option<&'a Pod> {
+    fn unschedulable_pod<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
         let pvc_name = pvc.name_any();
 
         let pod = self.pods.iter().find(|p| pod_uses_pvc(p, &pvc_name))?;
@@ -227,7 +224,7 @@ impl DeleteReason {
             }
             Self::UnschedulableTooLong { pod } => {
                 format!(
-                    "pod '{}' has been unschedulable past the configured threshold",
+                    "pod '{}' has been pending past the configured threshold",
                     pod
                 )
             }
@@ -531,7 +528,7 @@ mod tests {
 
         match reason {
             DeleteReason::UnschedulableTooLong { pod } => assert_eq!(pod, "pending-pod"),
-            _ => panic!("expected unschedulable too long reason"),
+            _ => panic!("expected pending too long reason"),
         }
     }
 

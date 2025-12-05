@@ -27,27 +27,18 @@ PVC Reaper expects Kubernetes 1.24+, Helm 3, and RBAC permissions allowing PVC, 
 
 ### Helm (recommended)
 
-```bash
-# From the chart packaged in this repo
-helm install pvc-reaper ./helm/pvc-reaper \
-  --namespace pvc-reaper \
-  --create-namespace
 
-# Override values inline or with a values.yaml file
-helm upgrade --install pvc-reaper ./helm/pvc-reaper \
-  --namespace pvc-reaper \
-  --create-namespace \
-  --set config.storageClassNames="openebs-lvm,local-storage"
+##### Add the repo
+
+```bash
+helm repo add pvc-reaper https://0xforerunner.github.io/pvc-reaper
+helm repo update
 ```
 
-### From source
+##### Install the chart
 
 ```bash
-git clone https://github.com/0xforerunner/pvc-reaper.git
-cd pvc-reaper
-helm install pvc-reaper ./helm/pvc-reaper \
-  --namespace pvc-reaper \
-  --create-namespace
+helm install pvc-reaper pvc-reaper/pvc-reaper -n <namespace> -f values.yaml
 ```
 
 ## Configuration
@@ -73,7 +64,7 @@ config:
   reapIntervalSecs: 30
   dryRun: false
   checkUnschedulablePods: true
-  unschedulablePodThresholdSecs: 300
+  unschedulablePodThresholdSecs: 120
 logLevel: info
 ```
 
