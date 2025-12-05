@@ -62,7 +62,7 @@ config:
   checkUnschedulablePods: true
 
   # How long a pod must be unschedulable before considering its PVC for deletion (seconds)
-  unschedulablePodThresholdSecs: 300
+  unschedulablePodThresholdSecs: 120
 
 # Log level (trace, debug, info, warn, error)
 logLevel: info

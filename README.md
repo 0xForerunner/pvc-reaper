@@ -28,17 +28,10 @@ PVC Reaper expects Kubernetes 1.24+, Helm 3, and RBAC permissions allowing PVC, 
 ### Helm (recommended)
 
 
-##### Add the repo
-
-```bash
-helm repo add pvc-reaper https://0xforerunner.github.io/pvc-reaper
-helm repo update
-```
-
 ##### Install the chart
 
 ```bash
-helm install pvc-reaper pvc-reaper/pvc-reaper -n <namespace> -f values.yaml
+helm upgrade --install pvc-reaper oci://ghcr.io/0xforerunner/charts/pvc-reaper --namespace pvc-reaper --create-namespace
 ```
 
 ## Configuration
