@@ -373,7 +373,7 @@ mod tests {
             reap_interval_secs: 60,
             dry_run: false,
             check_unschedulable_pods: true,
-            unschedulable_pod_threshold_secs: 300,
+            unschedulable_pod_threshold_secs: 120,
         }
     }
 
@@ -469,7 +469,7 @@ mod tests {
         let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 600);
         assert!(pod_exceeds_unschedulable_thresh(
             &pod,
-            Duration::from_secs(300),
+            Duration::from_secs(120),
             Utc::now()
         ));
     }
@@ -479,7 +479,7 @@ mod tests {
         let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 60);
         assert!(!pod_exceeds_unschedulable_thresh(
             &pod,
-            Duration::from_secs(300),
+            Duration::from_secs(120),
             Utc::now()
         ));
     }
