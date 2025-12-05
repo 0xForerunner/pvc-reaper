@@ -80,6 +80,9 @@ jobs:
           echo "CHART_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           echo "CHART_NAME=pvc-reaper" >> "$GITHUB_ENV"
 
+      - name: Normalize GHCR owner to lowercase
+        run: echo "REGISTRY_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Package chart
         run: |
           mkdir -p packaged
@@ -89,7 +92,7 @@ jobs:
             --destination packaged
 
       - name: Push chart to GHCR
-        run: helm push "packaged/${CHART_NAME}-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+        run: helm push "packaged/${CHART_NAME}-${CHART_VERSION}.tgz" oci://${{ env.REGISTRY }}/${{ env.REGISTRY_OWNER }}/charts
 
   create-release:
     name: Create GitHub Release
