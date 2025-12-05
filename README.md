@@ -9,7 +9,7 @@ A Rust-powered Kubernetes controller that reaps PersistentVolumeClaims (PVCs) re
 PVC Reaper is designed primarily for OpenEBS workflows that use ephemeral local NVMe disks on cloud infrastructure. When nodes are recycled or terminated, PVCs can become orphaned, preventing pods from being rescheduled. PVC Reaper solves this by:
 
 1. **Detecting Missing Nodes**: Automatically identifies PVCs that reference nodes that no longer exist in the cluster
-2. **Handling Unschedulable Pods**: Detects pods stuck in a unschedulable state because their PVC is bound to a missing or unavailable node
+2. **Handling Unschedulable Pods**: Detects pods stuck in an unschedulable state because their PVC is bound to a missing or unavailable node
 3. **Automatic Cleanup**: Safely deletes orphaned PVCs, allowing Kubernetes to reschedule pods with new PVCs
 
 ## Features
@@ -60,7 +60,7 @@ Tune the controller via Helm values or the matching environment variables:
 | `config.storageProvisioner` | `STORAGE_PROVISIONER` | `local.csi.openebs.io` | Provisioner annotation used to filter PVCs |
 | `config.reapIntervalSecs` | `REAP_INTERVAL_SECS` | `60` | Seconds between reaping loops |
 | `config.dryRun` | `DRY_RUN` | `false` | Log actions without deleting PVCs |
-| `config.checkUnscheduablePods` | `CHECK_UNSCHEDULABLE_PODS` | `true` | Enable unschedulable pod scanning |
+| `config.checkUnschedulablePods` | `CHECK_UNSCHEDULABLE_PODS` | `true` | Enable unschedulable pod scanning |
 | `config.unschedulablePodThresholdSecs` | `UNSCHEDULABLE_POD_THRESHOLD_SECS` | `120` | How long a pod must be unschedulable before action |
 | `logLevel` | `RUST_LOG` | `info` | Controller log level |
 

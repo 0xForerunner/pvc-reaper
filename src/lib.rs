@@ -143,7 +143,7 @@ impl State {
         pvc: &PersistentVolumeClaim,
         config: &ReaperConfig,
     ) -> Option<DeleteReason> {
-        let unschedulable_pod = self.unschedulable_unschedulable_pod(pvc)?;
+        let unschedulable_pod = self.unschedulable_pod_for_pvc(pvc)?;
         let pod_name = unschedulable_pod.name_any();
 
         if let Some(node) = self.missing_node(pvc) {
@@ -162,7 +162,10 @@ impl State {
         None
     }
 
-    fn unschedulable_unschedulable_pod<'a>(&'a self, pvc: &'a PersistentVolumeClaim) -> Option<&'a Pod> {
+    fn unschedulable_pod_for_pvc<'a>(
+        &'a self,
+        pvc: &'a PersistentVolumeClaim,
+    ) -> Option<&'a Pod> {
         let pvc_name = pvc.name_any();
 
         let pod = self.pods.iter().find(|p| pod_uses_pvc(p, &pvc_name))?;
@@ -224,7 +227,7 @@ impl DeleteReason {
             }
             Self::UnschedulableTooLong { pod } => {
                 format!(
-                    "pod '{}' has been pending past the configured threshold",
+                    "pod '{}' has been unschedulable past the configured threshold",
                     pod
                 )
             }
@@ -478,7 +481,7 @@ mod tests {
     #[test]
     fn test_pod_unschedulable_not_long_enough() {
         let pod = pod_with_pvc("pending-pod", "test", "Pending", Some("Unschedulable"), 60);
-        assert!(!pod_exceeds_pending_thresh(
+        assert!(!pod_exceeds_unschedulable_thresh(
             &pod,
             Duration::from_secs(300),
             Utc::now()
@@ -528,7 +531,7 @@ mod tests {
 
         match reason {
             DeleteReason::UnschedulableTooLong { pod } => assert_eq!(pod, "pending-pod"),
-            _ => panic!("expected pending too long reason"),
+            _ => panic!("expected unschedulable too long reason"),
         }
     }
 
