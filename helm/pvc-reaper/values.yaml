@@ -55,14 +55,29 @@ config:
   # Interval between reaping loops in seconds
   reapIntervalSecs: 60
 
-  # Dry run mode - don't actually delete PVCs
+  # Dry run mode - don't actually modify Kubernetes resources
   dryRun: false
+
+  # Delete PVCs selected for cleanup
+  cleanupPvcs: true
 
   # Check for unschedulable pods with unschedulable PVCs
   checkUnschedulablePods: true
 
   # How long a pod must be unschedulable before considering its PVC for deletion (seconds)
   unschedulablePodThresholdSecs: 120
+
+  # Clean up Released PVs whose matching local-storage node no longer exists
+  cleanupPvs: true
+
+  # How long a PV must be Released/deleting before finalizers are removed (seconds)
+  pvGracePeriodSecs: 600
+
+  # Delete matching OpenEBS LVMVolume objects and clear finalizers during PV cleanup
+  cleanupOpenebsLvmVolumes: true
+
+  # Namespace where OpenEBS LVMVolume objects are stored
+  openebsNamespace: openebs
 
 # Log level (trace, debug, info, warn, error)
 logLevel: info

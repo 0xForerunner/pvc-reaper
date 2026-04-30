@@ -1,6 +1,6 @@
 [package]
 name = "pvc-reaper"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["PVC Reaper Contributors"]
 description = "Kubernetes controller to automatically delete PVCs pointing to missing nodes"

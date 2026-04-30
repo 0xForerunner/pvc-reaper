@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use kube::Client;
-use pvc_reaper::{reap, ReaperConfig};
+use pvc_reaper::{ReaperConfig, reap};
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -21,7 +21,18 @@ async fn main() -> Result<()> {
     info!("Storage provisioner: {}", config.storage_provisioner);
     info!("Reap interval: {}s", config.reap_interval_secs);
     info!("Dry run: {}", config.dry_run);
-    info!("Check unschedulable pods: {}", config.check_unschedulable_pods);
+    info!("Cleanup PVCs: {}", config.cleanup_pvcs);
+    info!(
+        "Check unschedulable pods: {}",
+        config.check_unschedulable_pods
+    );
+    info!("Cleanup PVs: {}", config.cleanup_pvs);
+    info!("PV grace period: {}s", config.pv_grace_period_secs);
+    info!(
+        "Cleanup OpenEBS LVMVolumes: {}",
+        config.cleanup_openebs_lvmvolumes
+    );
+    info!("OpenEBS namespace: {}", config.openebs_namespace);
 
     let client = Client::try_default()
         .await

@@ -40,10 +40,20 @@ spec:
           value: {{ .Values.config.reapIntervalSecs | quote }}
         - name: DRY_RUN
           value: {{ .Values.config.dryRun | quote }}
+        - name: CLEANUP_PVCS
+          value: {{ .Values.config.cleanupPvcs | quote }}
         - name: CHECK_UNSCHEDULABLE_PODS
           value: {{ .Values.config.checkUnschedulablePods | quote }}
         - name: UNSCHEDULABLE_POD_THRESHOLD_SECS
           value: {{ .Values.config.unschedulablePodThresholdSecs | quote }}
+        - name: CLEANUP_PVS
+          value: {{ .Values.config.cleanupPvs | quote }}
+        - name: PV_GRACE_PERIOD_SECS
+          value: {{ .Values.config.pvGracePeriodSecs | quote }}
+        - name: CLEANUP_OPENEBS_LVMVOLUMES
+          value: {{ .Values.config.cleanupOpenebsLvmVolumes | quote }}
+        - name: OPENEBS_NAMESPACE
+          value: {{ .Values.config.openebsNamespace | quote }}
         - name: RUST_LOG
           value: {{ .Values.logLevel }}
         resources:

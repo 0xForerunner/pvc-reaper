@@ -3,7 +3,7 @@
 
 # Variables
 IMAGE_NAME := env_var_or_default("IMAGE_NAME", "ghcr.io/0xforerunner/pvc-reaper")
-VERSION := env_var_or_default("VERSION", "0.1.0")
+VERSION := env_var_or_default("VERSION", "0.2.0")
 
 # Default recipe (runs when you just type `just`)
 default:
