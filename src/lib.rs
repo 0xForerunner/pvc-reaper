@@ -332,8 +332,8 @@ impl State {
                 config.dry_run
             );
 
-            if let Some(lvmvolume) = self.lvmvolumes.get(&pv_name) {
-                if has_finalizers(lvmvolume) || lvmvolume.metadata.deletion_timestamp.is_none() {
+            if let Some(lvmvolume) = self.lvmvolumes.get(&pv_name)
+                && (has_finalizers(lvmvolume) || lvmvolume.metadata.deletion_timestamp.is_none()) {
                     let lvmvolume_state = lvmvolume
                         .data
                         .get("status")
@@ -391,7 +391,6 @@ impl State {
                         );
                     }
                 }
-            }
 
             if has_external_provisioner_finalizer(pv) {
                 if config.cleanup_pvs {
@@ -447,13 +446,11 @@ impl State {
             return None;
         }
 
-        if let Some(lvmvolume) = self.lvmvolumes.get(&pv.name_any()) {
-            if let Some(owner_node) = lvmvolume_owner_node(lvmvolume) {
-                if self.node_names.contains(owner_node) {
+        if let Some(lvmvolume) = self.lvmvolumes.get(&pv.name_any())
+            && let Some(owner_node) = lvmvolume_owner_node(lvmvolume)
+                && self.node_names.contains(owner_node) {
                     return None;
                 }
-            }
-        }
 
         Some(StalePvReason { node })
     }
